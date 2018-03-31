@@ -39,12 +39,12 @@ def get_content(thing):
 
 def make_entry(row):
     rec = row['Rec?']
-    title, summary = row['Title'], row['Summary']
+    title, author, summary = row['Title'], row['Authors'], row['Summary']
     should_read = row['Should you read it?']
     prereqs, read_more = row['Prerequisites'], row['Read more']
     is_public = row['Public?']
     category = row['Category']
-    return Entry(rec, title, summary, should_read, prereqs, read_more, is_public, category)
+    return Entry(rec, title, author, summary, should_read, prereqs, read_more, is_public, category)
 
 
 ###################
@@ -111,11 +111,12 @@ CATEGORY_TREE = Category('All', [
 CATEGORIES = CATEGORY_TREE.get_leaf_categories()
 
 class Entry(object):
-    def __init__(self, rec, title, summary, should_read, prereqs, read_more, is_public, category, review=False):
+    def __init__(self, rec, title, author, summary, should_read, prereqs, read_more, is_public, category, review=False):
         assert 1 <= int(rec) <= 5
         self.rec = int(rec)
         assert title != ''
         self.title = title
+        self.author = author
         if (should_read == '') != (summary == ''):
             assert should_read == ''
             print('Warning: {0} has a summary but no "Should you read it" section'.format(title))
@@ -135,13 +136,12 @@ class Entry(object):
         self.review = review
 
     def get_html(self):
-        if self.is_only_link:
-            return md_to_html(self.title)
-
-        title, summary, should_read, prereqs, read_more = map(
-            md_to_html, [self.title, self.summary, self.should_read, self.prereqs, self.read_more])
+        title, author, summary, should_read, prereqs, read_more = map(
+            md_to_html, [self.title, self.author, self.summary, self.should_read, self.prereqs, self.read_more])
         if self.rec == 5:
             title = '<b>{0}</b>'.format(title)
+        if author != '':
+            author = ' <i>({0})</i>'.format(author)
         if should_read != '':
             should_read = '<br/><b>Should you read it?</b> {0}'.format(should_read)
         if prereqs != '':
@@ -149,10 +149,13 @@ class Entry(object):
         if read_more != '':
             read_more = '<br/><b>Read more:</b> {0}'.format(read_more)
 
-        template = '<p>{0}: {1}{2}{3}{4}</p>'
+        if self.is_only_link:
+            return '<p>{0}{1}</p>'.format(title, author)
+
+        template = '<p>{0}{1}: {2}{3}{4}{5}</p>'
         if self.review:
-            template = '<p>{0}: <b><i><u>{1}</u></i></b>{2}{3}{4}</p>'
-        return template.format(title, summary, should_read, prereqs, read_more)
+            template = '<p>{0}{1}: <b><i><u>{2}</u></i></b>{3}{4}{5}</p>'
+        return template.format(title, author, summary, should_read, prereqs, read_more)
 
 def md_to_html(md):
     result = markdown.markdown(str(md), output_format='html5')
@@ -177,11 +180,11 @@ def process(entries, tree, public=False):
             if e.category != node.name or e.is_public == 'No':
                 continue
             if e.is_public in ['Link only', '']:
-                e2 = Entry(e.rec, e.title, '', '', '', '', e.is_public, e.category)
+                e2 = Entry(e.rec, e.title, e.author, '', '', '', '', e.is_public, e.category)
             elif e.is_public == 'Yes':
                 e2 = e
             elif e.is_public == 'With edits':
-                e2 = Entry(e.rec, e.title, e.summary, e.should_read, e.prereqs,
+                e2 = Entry(e.rec, e.title, e.author, e.summary, e.should_read, e.prereqs,
                            e.read_more, e.is_public, e.category, review=True)
             else:
                 raise ValueError('Invalid value of is_public: ' + str(e.is_public))
