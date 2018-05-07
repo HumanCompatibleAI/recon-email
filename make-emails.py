@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 # Reading data #
 ################
 
-COLUMN_NAMES = ['Rec?', 'Title', 'Authors', 'Venue', 'Year', 'Email Date', 'Summary', 'Should you read it?', 'Prerequisites', 'Read more', 'Email status', 'Public?', 'Category']
+COLUMN_NAMES = ['Rec?', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Email Date', 'Summary', 'My opinion', 'Prerequisites', 'Read more', 'Email status', 'Public?', 'Category']
 
 def get_entries(filename):
     """Reads and parses the reconnaissance csv.
@@ -21,30 +21,40 @@ def get_entries(filename):
         rows = soup.find_all('tr')
         # rows[0] is the name of the columns (A, B, C, ...) so ignore it
         header = parse_row(rows[1])
+        # rows[2] shows how the top row is frozen, so ignore it
         assert header == COLUMN_NAMES, str(header)
-        row_dicts = [dict(zip(header, parse_row(row))) for row in rows[2:]]
-        assert all((row['Email status'] in ['Pending', 'Sent', 'Sent link only'] for row in row_dicts))
+        row_dicts = [dict(zip(header, parse_row(row))) for row in rows[3:]]
+        for row in row_dicts:
+            assert row['Email status'] in ['Do not send', 'Pending', 'Sent', 'Sent link only'], str(row)
         return [make_entry(row) for row in row_dicts if row['Email status'] == 'Pending']
 
 def parse_row(row):
     return [get_content(cell) for cell in row.children][1:]
 
 def get_content(thing):
-    if thing.name not in ['td', 'div']:
-        return thing
-    try:
-        return get_content(next(thing.children))
-    except StopIteration:
-        return ""
+    return get_content_from_list([thing])
+
+def get_content_from_list(lst):
+    if lst == []:
+        return ''
+    elif len(lst) == 1:
+        thing = lst[0]
+        if thing.name not in ['td', 'div']:
+            return str(thing)
+        return get_content_from_list(list(thing.children))
+    else:
+        lst = [thing for thing in lst if thing.name != 'br']
+        assert all((thing.name is None for thing in lst))
+        return '\n'.join([str(x) for x in lst])
 
 def make_entry(row):
     rec = row['Rec?']
-    title, author, summary = row['Title'], row['Authors'], row['Summary']
-    should_read = row['Should you read it?']
+    title, author, hattip = row['Title'], row['Authors'], row['H/T']
+    summary, opinion = row['Summary'], row['My opinion']
     prereqs, read_more = row['Prerequisites'], row['Read more']
     is_public = row['Public?']
     category = row['Category']
-    return Entry(rec, title, author, summary, should_read, prereqs, read_more, is_public, category)
+    return Entry(rec, title, author, hattip, summary, opinion, prereqs, read_more, is_public, category)
 
 
 ###################
@@ -58,6 +68,7 @@ class Category(object):
         """Name is a string, children is a list of Category objects."""
         self.name = name
         self.children = children
+        self.entries = []
 
     def is_leaf(self):
         return self.children == []
@@ -83,17 +94,20 @@ CATEGORY_TREE = Category('All', [
         Category('Problems'),
         Category('Technical agendas and prioritization'),
         Category('Iterated distillation and amplification'),
+        Category('Scalable oversight'),
         Category('Agent foundations'),
-        Category('Reward learning'),
+        Category('Learning human intent'),
         Category('Reward learning theory'),
         Category('Handling groups of agents'),
         Category('Interpretability'),
+        Category('Forecasting'),
+        Category('Critiques (Alignment)'),
         Category('Miscellaneous (Alignment)'),
     ]),
     Category('Near-term concerns', [
         Category('Adversarial examples'),
         Category('Fairness and bias'),
-        Category('Security'),
+        Category('Privacy and security'),
     ]),
     Category('AI strategy and policy'),
     Category('Malicious use of AI'),
@@ -102,7 +116,9 @@ CATEGORY_TREE = Category('All', [
         Category('Deep learning'),
         Category('Meta learning'),
         Category('Adversarial training'),
+        Category('Machine learning'),
         Category('AGI theory'),
+        Category('Critiques (Capabilities)'),
         Category('Miscellaneous (Capabilities)'),
     ]),
     Category('News'),
@@ -111,18 +127,19 @@ CATEGORY_TREE = Category('All', [
 CATEGORIES = CATEGORY_TREE.get_leaf_categories()
 
 class Entry(object):
-    def __init__(self, rec, title, author, summary, should_read, prereqs, read_more, is_public, category, review=False):
+    def __init__(self, rec, title, author, hattip, summary, opinion, prereqs, read_more, is_public, category, review=False):
         assert 1 <= int(rec) <= 5
         self.rec = int(rec)
         assert title != ''
         self.title = title
         self.author = author
-        if (should_read == '') != (summary == ''):
-            assert should_read == ''
-            print('Warning: {0} has a summary but no "Should you read it" section'.format(title))
+        self.hattip = hattip
+        if (opinion == '') != (summary == ''):
+            assert opinion == ''
+            print('Warning: {0} has a summary but no "My opinion" section'.format(title))
         self.is_only_link = (summary == '')
         self.summary = summary
-        self.should_read = should_read
+        self.opinion = opinion
         self.prereqs = prereqs
         self.read_more = read_more
         assert is_public in IS_PUBLIC_OPTIONS
@@ -135,30 +152,41 @@ class Entry(object):
         self.category = category
         self.review = review
 
-    def get_html(self):
-        title, author, summary, should_read, prereqs, read_more = map(
-            md_to_html, [self.title, self.author, self.summary, self.should_read, self.prereqs, self.read_more])
+    def get_html(self, highlight_section=False):
+        title, author, hattip, summary, opinion, prereqs, read_more = map(
+            md_to_html, [self.title, self.author, self.hattip, self.summary, self.opinion, self.prereqs, self.read_more])
+        if self.is_public != 'Yes':
+            if summary != '':
+                summary = '<i>{0}</i>'.format(summary)
+            if opinion != '':
+                opinion = '<i>{0}</i>'.format(opinion)
+
         if self.rec == 5:
             title = '<b>{0}</b>'.format(title)
         if author != '':
             author = ' <i>({0})</i>'.format(author)
-        if should_read != '':
-            should_read = '<br/><b>Should you read it?</b> {0}'.format(should_read)
+        if hattip != '':
+            hattip = ' (H/T {0})'.format(hattip)
+        if opinion != '':
+            opinion = '<br/><b>My opinion:</b> {0}'.format(opinion)
         if prereqs != '':
             prereqs = '<br/><b>Prerequisities:</b> {0}'.format(prereqs)
         if read_more != '':
             read_more = '<br/><b>Read more:</b> {0}'.format(read_more)
 
         if self.is_only_link:
-            return '<p>{0}{1}</p>'.format(title, author)
+            return '{0}{1}{2}'.format(title, author, hattip)
+        if self.rec == 5 and not highlight_section:
+            return '{0}{1}{2}: Summarized in the highlights!'.format(title, author, hattip)
 
-        template = '<p>{0}{1}: {2}{3}{4}{5}</p>'
+        template = '{0}{1}{2}: {3}{4}{5}{6}'
         if self.review:
-            template = '<p>{0}{1}: <b><i><u>{2}</u></i></b>{3}{4}{5}</p>'
-        return template.format(title, author, summary, should_read, prereqs, read_more)
+            template = '{0}{1}{2}: <b><i><u>{3}</u></i></b>{4}{5}{6}'
+        return template.format(title, author, hattip, summary, opinion, prereqs, read_more)
 
 def md_to_html(md):
     result = markdown.markdown(str(md), output_format='html5')
+    result = result.replace('\n', '<br/>')
     return result[3:-4]  # Strip off the starting <p> and ending </p>
 
 
@@ -166,30 +194,31 @@ def md_to_html(md):
 # Processing #
 ##############
 
-def process(entries, tree, public=False):
+def get_public_entries(entries):
+    result = []
+    for e in entries:
+        if e.is_public == 'No':
+            continue
+        if e.is_public in ['Link only', '']:
+            e2 = Entry(e.rec, e.title, e.author, e.hattip, '', '', '', '', e.is_public, e.category)
+        elif e.is_public == 'Yes':
+            e2 = e
+        elif e.is_public == 'With edits':
+            e2 = Entry(e.rec, e.title, e.author, e.hattip, e.summary, e.opinion, e.prereqs,
+                       e.read_more, e.is_public, e.category, review=True)
+        else:
+            raise ValueError('Invalid value of is_public: ' + str(e.is_public))
+        result.append(e2)
+    return result
+
+
+def process(entries, tree):
     """Modifies the category tree to add in entries at the appropriate places,
     and prune irrelevant parts of the tree.
     """
     def pick_entries(node):
         """Chooses entries associated with this node (which must be a leaf category)."""
-        if not public:
-            return [e for e in entries if e.category == node.name]
-
-        result = []
-        for e in entries:
-            if e.category != node.name or e.is_public == 'No':
-                continue
-            if e.is_public in ['Link only', '']:
-                e2 = Entry(e.rec, e.title, e.author, '', '', '', '', e.is_public, e.category)
-            elif e.is_public == 'Yes':
-                e2 = e
-            elif e.is_public == 'With edits':
-                e2 = Entry(e.rec, e.title, e.author, e.summary, e.should_read, e.prereqs,
-                           e.read_more, e.is_public, e.category, review=True)
-            else:
-                raise ValueError('Invalid value of is_public: ' + str(e.is_public))
-            result.append(e2)
-        return result
+        return [e for e in entries if e.category == node.name]
 
     def loop(node):
         if node.children == []:
@@ -219,6 +248,7 @@ TEMPLATE = """<!DOCTYPE html>
     </style>
 </head>
 <body>
+<h2>Highlights</h2>
 <div class="container">
 {{content}}
 </div>
@@ -226,20 +256,25 @@ TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-def write_output(filename, tree):
+def write_output(filename, entries, tree):
+    def highlight_html(entry):
+        return entry.get_html(highlight_section=True)
+
     def loop(node, depth):
         if not node.is_used:
             return ''
 
         html = '<h{0}>{1}</h{0}>'.format(depth, node.name)
         if not node.is_leaf():
-            return html + ''.join([loop(c, depth+1) for c in node.children])
+            return html + '<br/>' + ''.join([loop(c, depth+2) for c in node.children])
 
         entries_html = [entry.get_html() for entry in node.entries]
-        html += "<p>" + "</p><p>".join(entries_html) + '</p>'
+        html += '<p>' + '</p><p>'.join(entries_html) + '</p><br/>'
         return html
 
-    html = ''.join([loop(child, 2) for child in tree.children])
+    highlights = [entry for entry in entries if entry.rec == 5]
+    html = '<p>' + '</p><p>'.join([highlight_html(e) for e in highlights]) + '</p><br/>'
+    html += ''.join([loop(child, 1) for child in tree.children])
     with open(filename, 'w') as out:
         out.write(jinja2.Template(TEMPLATE).render(content=html))
 
@@ -257,11 +292,12 @@ def main():
     args = parse_args()
     entries = get_entries(args.input)
     chai_tree = CATEGORY_TREE.clone()
-    process(entries, chai_tree, public=False)
-    write_output(args.chai_output, chai_tree)
+    process(entries, chai_tree)
+    write_output(args.chai_output, entries, chai_tree)
+    public_entries = get_public_entries(entries)
     public_tree = CATEGORY_TREE.clone()
-    process(entries, public_tree, public=True)
-    write_output(args.public_output, public_tree)
+    process(public_entries, public_tree)
+    write_output(args.public_output, public_entries, public_tree)
 
 if __name__ == '__main__':
     main()
