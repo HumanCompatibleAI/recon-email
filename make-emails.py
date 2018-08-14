@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 # Reading data #
 ################
 
-COLUMN_NAMES = ['Rec?', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Email Date', 'Summary', 'My opinion', 'Prerequisites', 'Read more', 'Email status', 'Public?', 'Category']
+COLUMN_NAMES = ['Rec?', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Email', 'Summary', 'My opinion', 'Prerequisites', 'Read more', 'Email status', 'Public?', 'Category']
 
 def get_entries(filename):
     """Reads and parses the reconnaissance csv.
@@ -90,7 +90,9 @@ def flatten(lst_of_lsts):
     return result
 
 CATEGORY_TREE = Category('All', [
+    Category('Previous newsletters'),
     Category('Technical AI alignment', [
+        Category('Summary: Inverse Reinforcement Learning'),
         Category('Problems'),
         Category('Technical agendas and prioritization'),
         Category('Iterated distillation and amplification'),
@@ -98,16 +100,21 @@ CATEGORY_TREE = Category('All', [
         Category('Agent foundations'),
         Category('Learning human intent'),
         Category('Reward learning theory'),
+        Category('Preventing bad behavior'),
         Category('Handling groups of agents'),
+        Category('Game theory'),
         Category('Interpretability'),
+        Category('Verification'),
         Category('Forecasting'),
         Category('Critiques (Alignment)'),
+        Category('Field building'),
         Category('Miscellaneous (Alignment)'),
     ]),
     Category('Near-term concerns', [
         Category('Adversarial examples'),
         Category('Fairness and bias'),
         Category('Privacy and security'),
+        Category('Machine ethics'),
     ]),
     Category('AI strategy and policy'),
     Category('Malicious use of AI'),
@@ -115,7 +122,8 @@ CATEGORY_TREE = Category('All', [
         Category('Reinforcement learning'),
         Category('Deep learning'),
         Category('Meta learning'),
-        Category('Adversarial training'),
+        Category('Hierarchical RL'),
+        Category('Applications'),
         Category('Machine learning'),
         Category('AGI theory'),
         Category('Critiques (Capabilities)'),
@@ -168,25 +176,25 @@ class Entry(object):
         if hattip != '':
             hattip = ' (H/T {0})'.format(hattip)
         if opinion != '':
-            opinion = '<br/><b>My opinion:</b> {0}'.format(opinion)
+            opinion = '</p><p><b>My opinion:</b> {0}'.format(opinion)
         if prereqs != '':
-            prereqs = '<br/><b>Prerequisities:</b> {0}'.format(prereqs)
+            prereqs = '</p><p><b>Prerequisities:</b> {0}'.format(prereqs)
         if read_more != '':
-            read_more = '<br/><b>Read more:</b> {0}'.format(read_more)
+            read_more = '</p><p><b>Read more:</b> {0}'.format(read_more)
 
         if self.is_only_link:
-            return '{0}{1}{2}'.format(title, author, hattip)
+            return '<p>{0}{1}{2}</p>'.format(title, author, hattip)
         if self.rec == 5 and not highlight_section:
-            return '{0}{1}{2}: Summarized in the highlights!'.format(title, author, hattip)
+            return '<p>{0}{1}{2}: Summarized in the highlights!</p>'.format(title, author, hattip)
 
-        template = '{0}{1}{2}: {3}{4}{5}{6}'
+        template = '<p>{0}{1}{2}: {3}{4}{5}{6}</p>'
         if self.review:
-            template = '{0}{1}{2}: <b><i><u>{3}</u></i></b>{4}{5}{6}'
+            template = '<p>{0}{1}{2}: <b><i><u>{3}</u></i></b>{4}{5}{6}</p>'
         return template.format(title, author, hattip, summary, opinion, prereqs, read_more)
 
 def md_to_html(md):
     result = markdown.markdown(str(md), output_format='html5')
-    result = result.replace('\n', '<br/>')
+    result = result.replace('\n', '</p><p>')
     return result[3:-4]  # Strip off the starting <p> and ending </p>
 
 
@@ -269,11 +277,11 @@ def write_output(filename, entries, tree):
             return html + '<br/>' + ''.join([loop(c, depth+2) for c in node.children])
 
         entries_html = [entry.get_html() for entry in node.entries]
-        html += '<p>' + '</p><p>'.join(entries_html) + '</p><br/>'
+        html += ''.join(entries_html)
         return html
 
     highlights = [entry for entry in entries if entry.rec == 5]
-    html = '<p>' + '</p><p>'.join([highlight_html(e) for e in highlights]) + '</p><br/>'
+    html = ''.join([highlight_html(e) for e in highlights])
     html += ''.join([loop(child, 1) for child in tree.children])
     with open(filename, 'w') as out:
         out.write(jinja2.Template(TEMPLATE).render(content=html))
