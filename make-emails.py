@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 # Reading data #
 ################
 
-COLUMN_NAMES = ['Rec?', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Email', 'Summary', 'My opinion', 'Prerequisites', 'Read more', 'Email status', 'Public?', 'Category']
+COLUMN_NAMES = ['Rec?', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Email', 'Summary', 'My opinion', 'Prerequisites', 'Read more', 'Summarizer', 'Email status', 'Public?', 'Category', 'Notes']
 
 def get_entries(filename):
     """Reads and parses the reconnaissance csv.
@@ -52,16 +52,18 @@ def make_entry(row):
     title, author, hattip = row['Title'], row['Authors'], row['H/T']
     summary, opinion = row['Summary'], row['My opinion']
     prereqs, read_more = row['Prerequisites'], row['Read more']
-    is_public = row['Public?']
+    summarizer, is_public = row['Summarizer'], row['Public?']
     category = row['Category']
-    return Entry(rec, title, author, hattip, summary, opinion, prereqs, read_more, is_public, category)
+    return Entry(rec, title, author, hattip, summary, opinion, prereqs, read_more, summarizer, is_public, category)
 
 
 ###################
 # Data structures #
 ###################
 
+HIGHLIGHT_REC = 10
 IS_PUBLIC_OPTIONS = ['Yes', 'With edits', 'Link only', 'No', '']
+SUMMARIZER_OPTIONS = ['Richard', '']
 
 class Category(object):
     def __init__(self, name, children=[]):
@@ -118,16 +120,17 @@ CATEGORY_TREE = Category('All', [
     ]),
     Category('AI strategy and policy'),
     Category('Malicious use of AI'),
-    Category('AI capabilities', [
+    Category('Other progress in AI', [
         Category('Reinforcement learning'),
         Category('Deep learning'),
         Category('Meta learning'),
+        Category('Unsupervised learning'),
         Category('Hierarchical RL'),
         Category('Applications'),
         Category('Machine learning'),
         Category('AGI theory'),
-        Category('Critiques (Capabilities)'),
-        Category('Miscellaneous (Capabilities)'),
+        Category('Critiques (AI)'),
+        Category('Miscellaneous (AI)'),
     ]),
     Category('News'),
 ])
@@ -135,8 +138,8 @@ CATEGORY_TREE = Category('All', [
 CATEGORIES = CATEGORY_TREE.get_leaf_categories()
 
 class Entry(object):
-    def __init__(self, rec, title, author, hattip, summary, opinion, prereqs, read_more, is_public, category, review=False):
-        assert 1 <= int(rec) <= 5
+    def __init__(self, rec, title, author, hattip, summary, opinion, prereqs, read_more, summarizer, is_public, category, review=False):
+        assert 1 <= int(rec) <= HIGHLIGHT_REC
         self.rec = int(rec)
         assert title != ''
         self.title = title
@@ -150,6 +153,8 @@ class Entry(object):
         self.opinion = opinion
         self.prereqs = prereqs
         self.read_more = read_more
+        assert summarizer in SUMMARIZER_OPTIONS
+        self.summarizer = summarizer
         assert is_public in IS_PUBLIC_OPTIONS
         if is_public == 'With edits':
             assert summary != ''
@@ -161,18 +166,20 @@ class Entry(object):
         self.review = review
 
     def get_html(self, highlight_section=False):
-        title, author, hattip, summary, opinion, prereqs, read_more = map(
-            md_to_html, [self.title, self.author, self.hattip, self.summary, self.opinion, self.prereqs, self.read_more])
+        title, author, summarizer, hattip, summary, opinion, prereqs, read_more = map(
+            md_to_html, [self.title, self.author, self.summarizer, self.hattip, self.summary, self.opinion, self.prereqs, self.read_more])
         if self.is_public != 'Yes':
             if summary != '':
                 summary = '<i>{0}</i>'.format(summary)
             if opinion != '':
                 opinion = '<i>{0}</i>'.format(opinion)
 
-        if self.rec == 5:
+        if self.rec == HIGHLIGHT_REC:
             title = '<b>{0}</b>'.format(title)
         if author != '':
             author = ' <i>({0})</i>'.format(author)
+        if summarizer != '':
+            summarizer = ' (summarized by {0})'.format(summarizer)
         if hattip != '':
             hattip = ' (H/T {0})'.format(hattip)
         if opinion != '':
@@ -184,13 +191,13 @@ class Entry(object):
 
         if self.is_only_link:
             return '<p>{0}{1}{2}</p>'.format(title, author, hattip)
-        if self.rec == 5 and not highlight_section:
+        if self.rec == HIGHLIGHT_REC and not highlight_section:
             return '<p>{0}{1}{2}: Summarized in the highlights!</p>'.format(title, author, hattip)
 
-        template = '<p>{0}{1}{2}: {3}{4}{5}{6}</p>'
+        template = '<p>{0}{1}{2}{3}: {4}{5}{6}{7}</p>'
         if self.review:
-            template = '<p>{0}{1}{2}: <b><i><u>{3}</u></i></b>{4}{5}{6}</p>'
-        return template.format(title, author, hattip, summary, opinion, prereqs, read_more)
+            template = '<p>{0}{1}{2}{3}: <b><i><u>{4}</u></i></b>{5}{6}{7}</p>'
+        return template.format(title, author, summarizer, hattip, summary, opinion, prereqs, read_more)
 
 def md_to_html(md):
     result = markdown.markdown(str(md), output_format='html5')
@@ -213,7 +220,7 @@ def get_public_entries(entries):
             e2 = e
         elif e.is_public == 'With edits':
             e2 = Entry(e.rec, e.title, e.author, e.hattip, e.summary, e.opinion, e.prereqs,
-                       e.read_more, e.is_public, e.category, review=True)
+                       e.read_more, e.summarizer, e.is_public, e.category, review=True)
         else:
             raise ValueError('Invalid value of is_public: ' + str(e.is_public))
         result.append(e2)
@@ -280,7 +287,7 @@ def write_output(filename, entries, tree):
         html += ''.join(entries_html)
         return html
 
-    highlights = [entry for entry in entries if entry.rec == 5]
+    highlights = [entry for entry in entries if entry.rec == HIGHLIGHT_REC]
     html = ''.join([highlight_html(e) for e in highlights])
     html += ''.join([loop(child, 1) for child in tree.children])
     with open(filename, 'w') as out:
