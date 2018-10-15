@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 # Reading data #
 ################
 
-COLUMN_NAMES = ['Rec?', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Email', 'Summary', 'My opinion', 'Prerequisites', 'Read more', 'Summarizer', 'Email status', 'Public?', 'Category', 'Notes']
+COLUMN_NAMES = ['Rec?', 'Category', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Summarizer', 'Email status', 'Public?', 'Notes', 'Email', 'Summary', 'My opinion', 'Prerequisites', 'Read more']
 
 def get_entries(filename):
     """Reads and parses the reconnaissance csv.
@@ -39,7 +39,7 @@ def get_content_from_list(lst):
         return ''
     elif len(lst) == 1:
         thing = lst[0]
-        if thing.name not in ['td', 'div']:
+        if thing.name not in ['td', 'div', 'span']:
             return str(thing)
         return get_content_from_list(list(thing.children))
     else:
@@ -63,7 +63,7 @@ def make_entry(row):
 
 HIGHLIGHT_REC = 10
 IS_PUBLIC_OPTIONS = ['Yes', 'With edits', 'Link only', 'No', '']
-SUMMARIZER_OPTIONS = ['Richard', '']
+SUMMARIZER_OPTIONS = ['Richard', 'Dan H', '']
 
 class Category(object):
     def __init__(self, name, children=[]):
@@ -106,14 +106,15 @@ CATEGORY_TREE = Category('All', [
         Category('Handling groups of agents'),
         Category('Game theory'),
         Category('Interpretability'),
+        Category('Adversarial examples'),
         Category('Verification'),
+        Category('Robustness'),
         Category('Forecasting'),
         Category('Critiques (Alignment)'),
         Category('Field building'),
         Category('Miscellaneous (Alignment)'),
     ]),
     Category('Near-term concerns', [
-        Category('Adversarial examples'),
         Category('Fairness and bias'),
         Category('Privacy and security'),
         Category('Machine ethics'),
@@ -121,6 +122,7 @@ CATEGORY_TREE = Category('All', [
     Category('AI strategy and policy'),
     Category('Malicious use of AI'),
     Category('Other progress in AI', [
+        Category('Exploration'),
         Category('Reinforcement learning'),
         Category('Deep learning'),
         Category('Meta learning'),
@@ -148,7 +150,6 @@ class Entry(object):
         if (opinion == '') != (summary == ''):
             assert opinion == ''
             print('Warning: {0} has a summary but no "My opinion" section'.format(title))
-        self.is_only_link = (summary == '')
         self.summary = summary
         self.opinion = opinion
         self.prereqs = prereqs
@@ -166,37 +167,35 @@ class Entry(object):
         self.review = review
 
     def get_html(self, highlight_section=False):
-        title, author, summarizer, hattip, summary, opinion, prereqs, read_more = map(
+        title, author, summarizer_name, hattip, summary, opinion, prereqs, read_more = map(
             md_to_html, [self.title, self.author, self.summarizer, self.hattip, self.summary, self.opinion, self.prereqs, self.read_more])
-        if self.is_public != 'Yes':
-            if summary != '':
-                summary = '<i>{0}</i>'.format(summary)
-            if opinion != '':
-                opinion = '<i>{0}</i>'.format(opinion)
+
+        def maybe_format(s, format_str):
+            return s if s == '' else format_str.format(s)
+
+        if self.review:
+            summary = maybe_format(summary, '<b><i><u>{0}</u></i></b>')
+            opinion = maybe_format(opinion, '<b><i><u>{0}</u></i></b>')
+        elif self.is_public != 'Yes':
+            summary = maybe_format(summary, '<i>{0}</i>')
+            opinion = maybe_format(opinion, '<i>{0}</i>')
 
         if self.rec == HIGHLIGHT_REC:
-            title = '<b>{0}</b>'.format(title)
-        if author != '':
-            author = ' <i>({0})</i>'.format(author)
-        if summarizer != '':
-            summarizer = ' (summarized by {0})'.format(summarizer)
-        if hattip != '':
-            hattip = ' (H/T {0})'.format(hattip)
+            title = maybe_format(title, '<b>{0}</b>')
+        author = maybe_format(author, ' <i>({0})</i>')
+        hattip = maybe_format(hattip, ' (H/T {0})')
+        summarizer = maybe_format(summarizer_name, ' (summarized by {0})')
+        summary = maybe_format(summary, ': {0}')
         if opinion != '':
-            opinion = '</p><p><b>My opinion:</b> {0}'.format(opinion)
-        if prereqs != '':
-            prereqs = '</p><p><b>Prerequisities:</b> {0}'.format(prereqs)
-        if read_more != '':
-            read_more = '</p><p><b>Read more:</b> {0}'.format(read_more)
+            opinion = "</p><p><b>{0}'s opinion:</b> {1}".format(
+                ('Rohin' if summarizer_name == '' else summarizer_name), opinion)
+        prereqs = maybe_format(prereqs, '</p><p><b>Prerequisities:</b> {0}')
+        read_more = maybe_format(read_more, '</p><p><b>Read more:</b> {0}')
 
-        if self.is_only_link:
-            return '<p>{0}{1}{2}</p>'.format(title, author, hattip)
         if self.rec == HIGHLIGHT_REC and not highlight_section:
             return '<p>{0}{1}{2}: Summarized in the highlights!</p>'.format(title, author, hattip)
 
-        template = '<p>{0}{1}{2}{3}: {4}{5}{6}{7}</p>'
-        if self.review:
-            template = '<p>{0}{1}{2}{3}: <b><i><u>{4}</u></i></b>{5}{6}{7}</p>'
+        template = '<p>{0}{1}{2}{3}{4}{5}{6}{7}</p>'
         return template.format(title, author, summarizer, hattip, summary, opinion, prereqs, read_more)
 
 def md_to_html(md):
