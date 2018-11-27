@@ -94,10 +94,14 @@ def flatten(lst_of_lsts):
 CATEGORY_TREE = Category('All', [
     Category('Previous newsletters'),
     Category('Technical AI alignment', [
+        Category('Embedded agency sequence'),
+        Category('Iterated amplification sequence'),
+        Category('Value learning sequence'),
+        Category('Fixed point sequence'),
         Category('Summary: Inverse Reinforcement Learning'),
         Category('Problems'),
         Category('Technical agendas and prioritization'),
-        Category('Iterated distillation and amplification'),
+        Category('Iterated amplification'),
         Category('Scalable oversight'),
         Category('Agent foundations'),
         Category('Learning human intent'),
@@ -109,6 +113,7 @@ CATEGORY_TREE = Category('All', [
         Category('Adversarial examples'),
         Category('Verification'),
         Category('Robustness'),
+        Category('Uncertainty'),
         Category('Forecasting'),
         Category('Critiques (Alignment)'),
         Category('Field building'),
