@@ -2,6 +2,7 @@ import argparse
 import csv
 import jinja2
 import markdown
+import re
 import sys
 from bs4 import BeautifulSoup
 
@@ -11,22 +12,32 @@ from bs4 import BeautifulSoup
 
 COLUMN_NAMES = ['Rec?', 'Category', 'Title', 'Authors', 'Venue', 'Year', 'H/T', 'Summarizer', 'Email status', 'Public?', 'Notes', 'Email', 'Summary', 'My opinion', 'Prerequisites', 'Read more']
 
-def get_entries(filename):
+def get_entries(filename, header_index, for_database):
     """Reads and parses the reconnaissance csv.
+
+    filename: The name of the HTML file from which to extract entries
+    header_index: The index of the row containing the column names
+    for_database: If True the entries are only for the database, so be a bit lax about input validation. Keep all entries, not just Pending ones, and don't require the category to exist.
 
     Returns a list of Entry objects.
     """
     with open(filename, 'r') as html_file:
         soup = BeautifulSoup(html_file, 'html.parser')
         rows = soup.find_all('tr')
-        # rows[0] is the name of the columns (A, B, C, ...) so ignore it
-        header = parse_row(rows[1])
-        # rows[2] shows how the top row is frozen, so ignore it
+        header = parse_row(rows[header_index])
         assert header == COLUMN_NAMES, str(header)
-        row_dicts = [dict(zip(header, parse_row(row))) for row in rows[3:]]
+        # rows[header_index + 1] shows how the top row is frozen, so ignore it
+        row_dicts = [dict(zip(header, parse_row(row))) for row in rows[header_index + 2:]]
         for row in row_dicts:
-            assert row['Email status'] in ['Do not send', 'Pending', 'Sent', 'Sent link only'], str(row)
-        return [make_entry(row) for row in row_dicts if row['Email status'] == 'Pending']
+            assert row['Email status'] in ['Do not send', 'Pending', 'Sent', 'Sent link only', 'N/A'], str(row)
+
+        def use_row(row):
+            if for_database:
+                return row['Category'] != 'Previous newsletters'
+            else:
+                return row['Email status'] == 'Pending'
+
+        return [make_entry(row, for_database) for row in row_dicts if use_row(row)]
 
 def parse_row(row):
     return [get_content(cell) for cell in row.children][1:]
@@ -44,17 +55,17 @@ def get_content_from_list(lst):
         return get_content_from_list(list(thing.children))
     else:
         lst = [thing for thing in lst if thing.name != 'br']
-        assert all((thing.name is None for thing in lst))
+        assert all((thing.name is None for thing in lst)), str(lst)
         return '\n'.join([str(x) for x in lst])
 
-def make_entry(row):
-    rec = row['Rec?']
+def make_entry(row, for_database):
+    rec, category = row['Rec?'], row['Category']
     title, author, hattip = row['Title'], row['Authors'], row['H/T']
     summary, opinion = row['Summary'], row['My opinion']
     prereqs, read_more = row['Prerequisites'], row['Read more']
     summarizer, is_public = row['Summarizer'], row['Public?']
-    category = row['Category']
-    return Entry(rec, title, author, hattip, summary, opinion, prereqs, read_more, summarizer, is_public, category)
+    email = row['Email']
+    return Entry(rec, category, title, author, hattip, summary, opinion, prereqs, read_more, summarizer, email, is_public, for_database=for_database)
 
 
 ###################
@@ -109,6 +120,7 @@ CATEGORY_TREE = Category('All', [
         Category('Preventing bad behavior'),
         Category('Handling groups of agents'),
         Category('Game theory'),
+        Category('Philosophical deliberation'),
         Category('Interpretability'),
         Category('Adversarial examples'),
         Category('Verification'),
@@ -129,6 +141,7 @@ CATEGORY_TREE = Category('All', [
     Category('Other progress in AI', [
         Category('Exploration'),
         Category('Reinforcement learning'),
+        Category('Multiagent RL'),
         Category('Deep learning'),
         Category('Meta learning'),
         Category('Unsupervised learning'),
@@ -145,14 +158,14 @@ CATEGORY_TREE = Category('All', [
 CATEGORIES = CATEGORY_TREE.get_leaf_categories()
 
 class Entry(object):
-    def __init__(self, rec, title, author, hattip, summary, opinion, prereqs, read_more, summarizer, is_public, category, review=False):
+    def __init__(self, rec, category, title, author, hattip, summary, opinion, prereqs, read_more, summarizer, email, is_public, review=False, for_database=False):
         assert 1 <= int(rec) <= HIGHLIGHT_REC
         self.rec = int(rec)
         assert title != ''
         self.title = title
         self.author = author
         self.hattip = hattip
-        if (opinion == '') != (summary == ''):
+        if (opinion == '') != (summary == '') and not for_database:
             assert opinion == ''
             print('Warning: {0} has a summary but no "My opinion" section'.format(title))
         self.summary = summary
@@ -161,19 +174,22 @@ class Entry(object):
         self.read_more = read_more
         assert summarizer in SUMMARIZER_OPTIONS
         self.summarizer = summarizer
+        self.email = email
         assert is_public in IS_PUBLIC_OPTIONS
         if is_public == 'With edits':
             assert summary != ''
         if is_public == '':
             assert summary == ''
         self.is_public = is_public
-        assert category in CATEGORIES, category
+        if not for_database:
+            assert category in CATEGORIES, category
         self.category = category
         self.review = review
 
-    def get_html(self, highlight_section=False):
+    def get_html(self, database, highlight_section=False):
+        make_html = lambda text: self.spreadsheet_text_to_html(text, database)
         title, author, summarizer_name, hattip, summary, opinion, prereqs, read_more = map(
-            md_to_html, [self.title, self.author, self.summarizer, self.hattip, self.summary, self.opinion, self.prereqs, self.read_more])
+            make_html, [self.title, self.author, self.summarizer, self.hattip, self.summary, self.opinion, self.prereqs, self.read_more])
 
         def maybe_format(s, format_str):
             return s if s == '' else format_str.format(s)
@@ -203,10 +219,33 @@ class Entry(object):
         template = '<p>{0}{1}{2}{3}{4}{5}{6}{7}</p>'
         return template.format(title, author, summarizer, hattip, summary, opinion, prereqs, read_more)
 
+    def spreadsheet_text_to_html(self, text, database):
+        def lookup(link_text, database_key):
+            if database_key not in database:
+                print('Unknown post/paper (entry not found in database): ' + database_key)
+            link, email = database[database_key]
+            return '[{0}]({1}) ({2})'.format(link_text, link, email)
+
+        # Handle tags <@ @>(@ @) and <@ @>
+        text = re.sub(r"<@([^@]*)@>\(@([^@]*)@\)", lambda m: lookup(m.group(1), m.group(2)), text)
+        text = re.sub(r"<@([^@]*)@>", lambda m: lookup(m.group(1), m.group(1)), text)
+        result = md_to_html(text)
+        return result[3:-4]  # Strip off the starting <p> and ending </p>
+
+
 def md_to_html(md):
     result = markdown.markdown(str(md), output_format='html5')
     result = result.replace('\n', '</p><p>')
-    return result[3:-4]  # Strip off the starting <p> and ending </p>
+    return result
+
+
+def make_database(entries):
+    result = {}
+    for e in entries:
+        m = re.match(r'^<a href="(\S+)" target="_blank">(.*)</a>$', e.title)
+        if m is not None:
+            result[m.group(2)] = (m.group(1), e.email)
+    return result
 
 
 ##############
@@ -219,12 +258,12 @@ def get_public_entries(entries):
         if e.is_public == 'No':
             continue
         if e.is_public in ['Link only', '']:
-            e2 = Entry(e.rec, e.title, e.author, e.hattip, '', '', '', '', e.is_public, e.category)
+            e2 = Entry(e.rec, e.category, e.title, e.author, e.hattip, '', '', '', '', '', e.email, e.is_public)
         elif e.is_public == 'Yes':
             e2 = e
         elif e.is_public == 'With edits':
-            e2 = Entry(e.rec, e.title, e.author, e.hattip, e.summary, e.opinion, e.prereqs,
-                       e.read_more, e.summarizer, e.is_public, e.category, review=True)
+            e2 = Entry(e.rec, e.category, e.title, e.author, e.hattip, e.summary, e.opinion, e.prereqs,
+                       e.read_more, e.summarizer, e.email, e.is_public, review=True)
         else:
             raise ValueError('Invalid value of is_public: ' + str(e.is_public))
         result.append(e2)
@@ -275,9 +314,9 @@ TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-def write_output(filename, entries, tree):
+def write_output(filename, entries, database, tree):
     def highlight_html(entry):
-        return entry.get_html(highlight_section=True)
+        return entry.get_html(database, highlight_section=True)
 
     def loop(node, depth):
         if not node.is_used:
@@ -287,7 +326,7 @@ def write_output(filename, entries, tree):
         if not node.is_leaf():
             return html + '<br/>' + ''.join([loop(c, depth+2) for c in node.children])
 
-        entries_html = [entry.get_html() for entry in node.entries]
+        entries_html = [entry.get_html(database) for entry in node.entries]
         html += ''.join(entries_html)
         return html
 
@@ -300,7 +339,9 @@ def write_output(filename, entries, tree):
 def parse_args(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', type=str, default='data/New entries.html',
-                        help='HTML export from reconnaissance spreadsheet.')
+                        help='HTML export of new entries from reconnaissance spreadsheet.')
+    parser.add_argument('-d', '--database', type=str, default='data/Summarized entries.html',
+                        help='HTML export of existing summaries from reconnaissance spreadsheet.')
     parser.add_argument('-c', '--chai_output', type=str, default='data/email.html',
                         help='Output file name. Defaults to email.html.')
     parser.add_argument('-p', '--public_output', type=str, default='data/public_email.html',
@@ -309,14 +350,15 @@ def parse_args(args=None):
 
 def main():
     args = parse_args()
-    entries = get_entries(args.input)
+    entries = get_entries(args.input, 1, False)
+    database = make_database(get_entries(args.database, 2, True))
     chai_tree = CATEGORY_TREE.clone()
     process(entries, chai_tree)
-    write_output(args.chai_output, entries, chai_tree)
+    write_output(args.chai_output, entries, database, chai_tree)
     public_entries = get_public_entries(entries)
     public_tree = CATEGORY_TREE.clone()
     process(public_entries, public_tree)
-    write_output(args.public_output, public_entries, public_tree)
+    write_output(args.public_output, public_entries, database, public_tree)
 
 if __name__ == '__main__':
     main()
