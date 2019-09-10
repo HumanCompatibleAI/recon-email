@@ -130,7 +130,7 @@ COLUMN_ENUMS = {
         'Yes', 'With edits', 'Link only', 'No', ''
     ],
     'Summarizer': [
-        'Richard', 'Dan H', 'Cody', ''
+        'Rohin', 'Richard', 'Dan H', 'Cody', ''
     ],
     'Summarize?': [
         'Yes', 'No', '1', '2', '3', '4', '5', ''
@@ -153,7 +153,7 @@ class ReconSpreadsheetReader(SpreadsheetReader):
 
     def check_row(self, row):
         assert row['Email status'] in COLUMN_ENUMS['Email status'], \
-            'Invalid email status: {}'.format(row['Email status'])
+            'Invalid email status: {}\nEntry: {}'.format(row['Email status'], row)
 
     def make_entry(self, row):
         """An entry has the same form as a row: it is a dictionary that assigns
@@ -174,6 +174,10 @@ class ReconSpreadsheetReader(SpreadsheetReader):
         assert entry['Title'] != ''
 
         summary, opinion = entry['Summary'], entry['My opinion']
+
+        if summary != '' or opinion != '':
+            assert entry['Summarizer'] != '', entry
+
         if entry['Public?'] == 'With edits':
             assert summary != '' or opinion != ''
         if entry['Public?'] == '':
@@ -235,6 +239,7 @@ CATEGORY_TREE = Category('All', [
         Category('Technical agendas and prioritization'),
         Category('Iterated amplification'),
         Category('Scalable oversight'),
+        Category('Mesa optimization'),
         Category('Agent foundations'),
         Category('Learning human intent'),
         Category('Reward learning theory'),
@@ -364,6 +369,7 @@ TEMPLATE = """<!DOCTYPE html>
     </style>
 </head>
 <body>
+<p>Audio version <a href="http://alignment-newsletter.libsyn.com/alignment-newsletter-{{number}}">here</a> (may not be up yet).</p>
 <h2>Highlights</h2>
 <div class="container">
 {{content}}
@@ -372,7 +378,7 @@ TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-def write_output(filename, entries, database, tree, public):
+def write_output(filename, entries, database, tree, public, number):
     def loop(node, depth):
         if not node.is_used:
             return ''
@@ -389,7 +395,7 @@ def write_output(filename, entries, database, tree, public):
     html = ''.join([get_html(e, database, public, True) for e in highlights])
     html += ''.join([loop(child, 1) for child in tree.children])
     with open(filename, 'w') as out:
-        out.write(jinja2.Template(TEMPLATE).render(content=html))
+        out.write(jinja2.Template(TEMPLATE).render(content=html, number=number))
 
 def get_html(entry, database, public, highlight_section):
     # Highlighted entries should only go in the highlights section.
@@ -398,9 +404,35 @@ def get_html(entry, database, public, highlight_section):
     def lookup(link_text, database_key):
         database_key = database_key.lower()
         if database_key not in database:
-            print('Unknown post/paper (entry not found in database): ' + database_key)
+            raise ValueError('Unknown post/paper (entry not found in database): ' + database_key)
         link, email = database[database_key]
         return '[{0}]({1}) ({2})'.format(link_text, link, email)
+
+    def format_authors(authors_text):
+        # No author field
+        if authors_text.strip() == '':
+            return ''
+        # All authors contributed equally
+        elif ' and ' in authors_text:
+            return authors_text.strip()
+
+        authors = [author.strip() for author in authors_text.split(',')]
+
+        # Single author
+        if len(authors) == 1:
+            return authors_text.strip()
+        # Multiple authors; single first author
+        elif authors[0][-1] != '*':
+            return authors[0] + ' et al'
+        # Multiple first authors
+        else:
+            first_authors = [author for author in authors if author[-1] == '*']
+            # These should be the first n authors, with n > 1, but also not all authors
+            assert 1 < len(first_authors) < len(authors)
+            assert first_authors[-1] == authors[len(first_authors) - 1]
+            # Remove asterisks
+            first_authors = [author[:-1] for author in first_authors]
+            return ', '.join(first_authors) + ' et al'
 
     def spreadsheet_text_to_html(text):
         # Handle tags <@ @>(@ @) and <@ @>
@@ -411,8 +443,13 @@ def get_html(entry, database, public, highlight_section):
 
     title, author, summarizer_name, hattip, summary, opinion, prereqs, read_more = map(
         spreadsheet_text_to_html, [
-            entry['Title'], entry['Authors'], entry['Summarizer'], entry['H/T'],
-            entry['Summary'], entry['My opinion'], entry['Prerequisites'],
+            entry['Title'],
+            format_authors(entry['Authors']),
+            entry['Summarizer'],
+            entry['H/T'],
+            entry['Summary'],
+            entry['My opinion'],
+            entry['Prerequisites'],
             entry['Read more']
         ])
 
@@ -433,8 +470,7 @@ def get_html(entry, database, public, highlight_section):
     summarizer = maybe_format(summarizer_name, ' (summarized by {0})')
     summary = maybe_format(summary, ': {0}')
     if opinion != '':
-        opinion = "</p><p><b>{0}'s opinion:</b> {1}".format(
-            ('Rohin' if summarizer_name == '' else summarizer_name), opinion)
+        opinion = "</p><p><b>{0}'s opinion:</b> {1}".format(summarizer_name, opinion)
     prereqs = maybe_format(prereqs, '</p><p><b>Prerequisities:</b> {0}')
     read_more = maybe_format(read_more, '</p><p><b>Read more:</b> {0}')
     template = '<p>{0}{1}{2}{3}{4}{5}{6}{7}</p>'
@@ -471,6 +507,8 @@ def parse_args(args=None):
                         help='Output file name. Defaults to email.html.')
     parser.add_argument('-p', '--public_output', type=str, default='data/public_email.html',
                         help='Public output file name. Defaults to public_email.html.')
+    parser.add_argument('-n', '--number', type=int, required=True,
+                        help='Issue number for the newsletter')
     return parser.parse_args(args)
 
 
@@ -485,12 +523,12 @@ def main():
 
     chai_tree = CATEGORY_TREE.clone()
     process(entries, chai_tree)
-    write_output(args.chai_output, entries, database, chai_tree, False)
+    write_output(args.chai_output, entries, database, chai_tree, False, args.number)
 
     public_entries = get_public_entries(entries)
     public_tree = CATEGORY_TREE.clone()
     process(public_entries, public_tree)
-    write_output(args.public_output, public_entries, database, public_tree, True)
+    write_output(args.public_output, public_entries, database, public_tree, True, args.number)
 
 if __name__ == '__main__':
     main()
