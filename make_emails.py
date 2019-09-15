@@ -38,7 +38,7 @@ class SpreadsheetReader(ABC):
         the index N+1 will be the small grey boxes showing the freezing, and
         content resumes with index N+2.
         """
-        with open(filename, 'r') as html_file:
+        with open(filename, 'r', encoding="utf-8") as html_file:
             soup = BeautifulSoup(html_file, 'html.parser')
             rows_soup = soup.find_all('tr')
             header = self.parse_row(rows_soup[header_index])
@@ -129,9 +129,7 @@ COLUMN_ENUMS = {
     'Public?': [
         'Yes', 'With edits', 'Link only', 'No', ''
     ],
-    'Summarizer': [
-        'Rohin', 'Richard', 'Dan H', 'Cody', ''
-    ],
+
     'Summarize?': [
         'Yes', 'No', '1', '2', '3', '4', '5', ''
     ]
