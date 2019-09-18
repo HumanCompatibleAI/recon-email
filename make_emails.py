@@ -129,7 +129,6 @@ COLUMN_ENUMS = {
     'Public?': [
         'Yes', 'With edits', 'Link only', 'No', ''
     ],
-
     'Summarize?': [
         'Yes', 'No', '1', '2', '3', '4', '5', ''
     ]

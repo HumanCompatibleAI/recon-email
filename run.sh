@@ -1,9 +1,15 @@
 #!/bin/bash
 
-cd data
+cd /mnt/c/users/georg\ arndt/pycharmprojects/an-converter/data
 rm *.html resources/sheet.css
-mv ~/Downloads/Reconnaissance.zip .
+mv /mnt/c/users/georg\ arndt/downloads/Reconnaissance.zip .
 unzip Reconnaissance.zip
 cd ..
-python make_emails.py -n $1
-open data/public_email.html data/email.html
+
+read -p "AN#?  : " num
+
+python3 make_emails.py -n $num
+
+cd data
+
+explorer.exe .
