@@ -1,5 +1,6 @@
 #!/bin/bash
 
+mkdir -p data
 cd data
 rm *.html resources/sheet.css
 mv ~/Downloads/Reconnaissance.zip .

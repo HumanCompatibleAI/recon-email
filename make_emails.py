@@ -390,7 +390,7 @@ class OutputWriter(object):
     def render_section_link(self, category, level):
         cid, name = category.cid, category.name.upper()
         link_html = self.render_template('section_link.html', cid=cid, category=name)
-        return '    ' * (level - 1) + link_html
+        return '&nbsp' * (8 * (level - 1)) + link_html
 
     def register_section(self, category, level):
         self.sections.append((category, level))
