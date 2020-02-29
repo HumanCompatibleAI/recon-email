@@ -2,11 +2,14 @@ import argparse
 import csv
 import jinja2
 import markdown
+import os
 import re
 import sys
 
 from abc import ABC, abstractmethod
 from bs4 import BeautifulSoup
+
+TEMPLATES_DIRECTORY = 'templates'
 
 
 ################
@@ -42,7 +45,7 @@ class SpreadsheetReader(ABC):
             soup = BeautifulSoup(html_file, 'html.parser')
             rows_soup = soup.find_all('tr')
             header = self.parse_row(rows_soup[header_index])
-            assert header == column_names, str(header)
+            assert header[:len(column_names)] == column_names, str(header)
 
             all_entries = []
             for row_soup in rows_soup[entry_index:]:
@@ -200,6 +203,7 @@ class Category(object):
     def __init__(self, name, children=[]):
         """Name is a string, children is a list of Category objects."""
         self.name = name
+        self.cid = name.upper().replace(' ', '_')
         self.children = children
         self.entries = []
 
@@ -351,61 +355,145 @@ def process(entries, tree):
     return loop(tree)
 
 
+def make_database(entries):
+    result = {}
+    for e in entries:
+        m = re.match(r'^<a href="(\S+)" target="_blank">(.*)</a>$', e['Title'])
+        if m is not None:
+            result[m.group(2).lower()] = (m.group(1), e['Email'])
+    return result
+
+
 ##########
 # Output #
 ##########
 
-TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {
-            font-family: sans-serif;
-            font-size: 10pt;
-        }
-    </style>
-</head>
-<body>
-<p>Audio version <a href="http://alignment-newsletter.libsyn.com/alignment-newsletter-{{number}}">here</a> (may not be up yet).</p>
-<h2>Highlights</h2>
-<div class="container">
-{{content}}
-</div>
-</body>
-</html>
-"""
 
-def write_output(filename, entries, database, tree, public, number):
-    def loop(node, depth):
-        if not node.is_used:
-            return ''
+class OutputWriter(object):
+    def __init__(self, database, email_number, public):
+        self.database = database
+        self.email_number = email_number
+        self.public = public
+        self.sections = []
+        self.html_sequence = []
+        self.current_summary_text = []
+        self.templates = {}
 
-        html = '<h{0}>{1}</h{0}>'.format(depth, node.name)
-        if not node.is_leaf():
-            return html + '<br/>' + ''.join([loop(c, depth+2) for c in node.children])
+    def write_to_file(self, filename):
+        self._finish_summary()
+        sections = "<br>".join([self.render_section_link(c, l) for c, l in self.sections])
+        content = ''.join(self.html_sequence)
+        html = self.render_template('email.html', content=content, email_number=self.email_number, sections=sections)
+        with open(filename, 'w') as out:
+            out.write(html)
 
-        entries_html = [get_html(entry, database, public, False) for entry in node.entries]
-        html += ''.join(entries_html)
-        return html
+    def render_section_link(self, category, level):
+        cid, name = category.cid, category.name.upper()
+        link_html = self.render_template('section_link.html', cid=cid, category=name)
+        return '    ' * (level - 1) + link_html
 
-    highlights = [entry for entry in entries if entry['Rec?'] == HIGHLIGHT_REC]
-    html = ''.join([get_html(e, database, public, True) for e in highlights])
-    html += ''.join([loop(child, 1) for child in tree.children])
-    with open(filename, 'w') as out:
-        out.write(jinja2.Template(TEMPLATE).render(content=html, number=number))
+    def register_section(self, category, level):
+        self.sections.append((category, level))
+        self._add_divider()
+        cid, name = category.cid, category.name.upper()
+        section_header_html = self.render_template('section_header.html', category=name, cid=cid, level=level)
+        self.current_summary_text.append(section_header_html)
 
-def get_html(entry, database, public, highlight_section):
-    # Highlighted entries should only go in the highlights section.
-    assert highlight_section == (entry['Rec?'] == HIGHLIGHT_REC)
+    def register_entry(self, entry, highlight_section):
+        # Highlighted entries should only go in the highlights section.
+        assert highlight_section == (entry['Rec?'] == HIGHLIGHT_REC)
+        title, author, summarizer_name, hattip, summary, opinion, prereqs, read_more = map(
+            self.spreadsheet_text_to_html, [
+                entry['Title'],
+                self.format_authors(entry['Authors']),
+                entry['Summarizer'],
+                entry['H/T'],
+                entry['Summary'],
+                entry['My opinion'],
+                entry['Prerequisites'],
+                entry['Read more']
+            ])
+
+        if entry['Public?'] != 'Yes':
+            if self.public:
+                # In anything except "With edits", summary + opinion will already be empty
+                summary = self.maybe_format(summary, '<b><i><u>{0}</u></i></b>')
+                opinion = self.maybe_format(opinion, '<b><i><u>{0}</u></i></b>')
+            else:
+                summary = self.maybe_format(summary, '<i>{0}</i>')
+                opinion = self.maybe_format(opinion, '<i>{0}</i>')
+
+        author = self.maybe_format(author, ' <i>({0})</i>')
+        hattip = self.maybe_format(hattip, ' (H/T {0})')
+        summarizer = self.maybe_format(summarizer_name, ' (summarized by {0})')
+        summary = self.maybe_format(summary, ': {0}')
+        prereqs = self.maybe_format(prereqs, '</p><p><b>Prerequisities:</b> {0}')
+        read_more = self.maybe_format(read_more, '</p><p><b>Read more:</b> {0}')
+        template = '<p>{0}{1}{2}{3}{4}{5}{6}</p>'
+        summary_text = template.format(title, author, summarizer, hattip, summary, prereqs, read_more)
+        self._add_summary(summary_text)
+
+        if opinion != '':
+            opinion_text = "<p><b>{0}'s opinion:</b> {1}</p>".format(summarizer_name, opinion)
+            self._add_opinion(opinion_text)
+
+
+    def _add_summary(self, summary_text):
+        self.current_summary_text.append(summary_text)
+
+    def _add_opinion(self, opinion_text):
+        self._finish_summary()
+        opinion_html = self.render_template('opinion.html', opinion=opinion_text)
+        self.html_sequence.append(opinion_html)
+
+    def _add_divider(self):
+        self._finish_summary()
+        divider_html = self.render_template('divider.html')
+        self.html_sequence.append(divider_html)
+
+    def _finish_summary(self):
+        if not self.current_summary_text:
+            return
+        summary_text = ''.join(self.current_summary_text)
+        summary_html = self.render_template('summary.html', summary=summary_text)
+        self.html_sequence.append(summary_html)
+        self.current_summary_text = []
+
+    def render_template(self, name, **kwargs):
+        if name not in self.templates:
+            with open(os.path.join(TEMPLATES_DIRECTORY, name)) as f:
+                # We do NOT want to autoescape, we will be injecting HTML into our templates.
+                # This is not a security risk because we are not a website and we trust our input.
+                # TODO: We are currently relying on jinja2's default behavior of NOT
+                # autoescaping, but they are likely to change this in the future.
+                template = jinja2.Template(''.join(f))
+                self.templates[name] = template
+
+        return self.templates[name].render(**kwargs)
+
+    def spreadsheet_text_to_html(self, text):
+        # Handle tags <@ @>(@ @) and <@ @>
+        text = re.sub(r"<@([^@]*)@>\(@([^@]*)@\)", lambda m: self.lookup(m.group(1), m.group(2)), text)
+        text = re.sub(r"<@([^@]*)@>", lambda m: self.lookup(m.group(1), m.group(1)), text)
+        result = self.md_to_html(text)
+        return result[3:-4]  # Strip off the starting <p> and ending </p>
     
-    def lookup(link_text, database_key):
+    def lookup(self, link_text, database_key):
         database_key = database_key.lower()
-        if database_key not in database:
+        if database_key not in self.database:
             raise ValueError('Unknown post/paper (entry not found in database): ' + database_key)
-        link, email = database[database_key]
+        link, email = self.database[database_key]
         return '[{0}]({1}) ({2})'.format(link_text, link, email)
 
-    def format_authors(authors_text):
+    def md_to_html(self, md):
+        result = markdown.markdown(str(md), output_format='html5')
+        result = result.replace('\n', '</p><p>')
+        return result
+
+    def maybe_format(self, s, format_str):
+        return s if s == '' else format_str.format(s)
+
+    def format_authors(self, authors_text):
         # No author field
         if authors_text.strip() == '':
             return ''
@@ -431,62 +519,27 @@ def get_html(entry, database, public, highlight_section):
             first_authors = [author[:-1] for author in first_authors]
             return ', '.join(first_authors) + ' et al'
 
-    def spreadsheet_text_to_html(text):
-        # Handle tags <@ @>(@ @) and <@ @>
-        text = re.sub(r"<@([^@]*)@>\(@([^@]*)@\)", lambda m: lookup(m.group(1), m.group(2)), text)
-        text = re.sub(r"<@([^@]*)@>", lambda m: lookup(m.group(1), m.group(1)), text)
-        result = md_to_html(text)
-        return result[3:-4]  # Strip off the starting <p> and ending </p>
 
-    title, author, summarizer_name, hattip, summary, opinion, prereqs, read_more = map(
-        spreadsheet_text_to_html, [
-            entry['Title'],
-            format_authors(entry['Authors']),
-            entry['Summarizer'],
-            entry['H/T'],
-            entry['Summary'],
-            entry['My opinion'],
-            entry['Prerequisites'],
-            entry['Read more']
-        ])
+def write_output(filename, entries, database, tree, public, number):
+    writer = OutputWriter(database, number, public)
+    writer.register_section(Category('Highlights'), 1)
+    for entry in entries:
+        if entry['Rec?'] == HIGHLIGHT_REC:
+            writer.register_entry(entry, True)
 
-    def maybe_format(s, format_str):
-        return s if s == '' else format_str.format(s)
-
-    if entry['Public?'] != 'Yes':
-        if public:
-            # In anything except "With edits", summary + opinion should be empty
-            summary = maybe_format(summary, '<b><i><u>{0}</u></i></b>')
-            opinion = maybe_format(opinion, '<b><i><u>{0}</u></i></b>')
-        else:
-            summary = maybe_format(summary, '<i>{0}</i>')
-            opinion = maybe_format(opinion, '<i>{0}</i>')
-
-    author = maybe_format(author, ' <i>({0})</i>')
-    hattip = maybe_format(hattip, ' (H/T {0})')
-    summarizer = maybe_format(summarizer_name, ' (summarized by {0})')
-    summary = maybe_format(summary, ': {0}')
-    if opinion != '':
-        opinion = "</p><p><b>{0}'s opinion:</b> {1}".format(summarizer_name, opinion)
-    prereqs = maybe_format(prereqs, '</p><p><b>Prerequisities:</b> {0}')
-    read_more = maybe_format(read_more, '</p><p><b>Read more:</b> {0}')
-    template = '<p>{0}{1}{2}{3}{4}{5}{6}{7}</p>'
-    return template.format(title, author, summarizer, hattip, summary, opinion, prereqs, read_more)
+    def loop(node, depth):
+        if not node.is_used:
+            return
+        writer.register_section(node, depth)
+        for entry in node.entries:
+            writer.register_entry(entry, False)
+        for c in node.children:
+            loop(c, depth + 1)
 
 
-def md_to_html(md):
-    result = markdown.markdown(str(md), output_format='html5')
-    result = result.replace('\n', '</p><p>')
-    return result
-
-
-def make_database(entries):
-    result = {}
-    for e in entries:
-        m = re.match(r'^<a href="(\S+)" target="_blank">(.*)</a>$', e['Title'])
-        if m is not None:
-            result[m.group(2).lower()] = (m.group(1), e['Email'])
-    return result
+    for child in tree.children:
+        loop(child, 1)
+    writer.write_to_file(filename)
 
 
 #################
