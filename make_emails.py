@@ -398,8 +398,9 @@ class OutputWriter(object):
         if level == 1:
             self._add_divider()
         cid, name = category.cid, category.name.upper()
-        line_html = '<br/>' if self.just_saw_category else ''
-        section_header_html = self.render_template('section_header.html', category=name, cid=cid, level=level, maybe_line=line_html)
+        if self.just_saw_category:
+            self._add_summary('<br/>', False)
+        section_header_html = self.render_template('section_header.html', category=name, cid=cid, level=level)
         self._add_summary(section_header_html, True)
 
     def register_entry(self, entry, highlight_section):
