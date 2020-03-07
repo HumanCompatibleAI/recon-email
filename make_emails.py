@@ -378,6 +378,7 @@ class OutputWriter(object):
         self.html_sequence = []
         self.current_summary_text = []
         self.templates = {}
+        self.just_saw_category = False
 
     def write_to_file(self, filename):
         self._finish_summary()
@@ -394,10 +395,12 @@ class OutputWriter(object):
 
     def register_section(self, category, level):
         self.sections.append((category, level))
-        self._add_divider()
+        if level == 1:
+            self._add_divider()
         cid, name = category.cid, category.name.upper()
-        section_header_html = self.render_template('section_header.html', category=name, cid=cid, level=level)
-        self.current_summary_text.append(section_header_html)
+        line_html = '<br/>' if self.just_saw_category else ''
+        section_header_html = self.render_template('section_header.html', category=name, cid=cid, level=level, maybe_line=line_html)
+        self._add_summary(section_header_html, True)
 
     def register_entry(self, entry, highlight_section):
         # Highlighted entries should only go in the highlights section.
@@ -431,15 +434,12 @@ class OutputWriter(object):
         read_more = self.maybe_format(read_more, '</p><p><b>Read more:</b> {0}')
         template = '<p>{0}{1}{2}{3}{4}{5}{6}</p>'
         summary_text = template.format(title, author, summarizer, hattip, summary, prereqs, read_more)
-        self._add_summary(summary_text)
+        self._add_summary(summary_text, False)
 
         if opinion != '':
             opinion_text = "<p><b>{0}'s opinion:</b> {1}</p>".format(summarizer_name, opinion)
             self._add_opinion(opinion_text)
 
-
-    def _add_summary(self, summary_text):
-        self.current_summary_text.append(summary_text)
 
     def _add_opinion(self, opinion_text):
         self._finish_summary()
@@ -451,6 +451,10 @@ class OutputWriter(object):
         divider_html = self.render_template('divider.html')
         self.html_sequence.append(divider_html)
 
+    def _add_summary(self, summary_text, is_category):
+        self.current_summary_text.append(summary_text)
+        self.just_saw_category = is_category
+
     def _finish_summary(self):
         if not self.current_summary_text:
             return
@@ -458,6 +462,7 @@ class OutputWriter(object):
         summary_html = self.render_template('summary.html', summary=summary_text)
         self.html_sequence.append(summary_html)
         self.current_summary_text = []
+        self.just_saw_category = False
 
     def render_template(self, name, **kwargs):
         if name not in self.templates:
