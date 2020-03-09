@@ -380,13 +380,22 @@ class OutputWriter(object):
         self.templates = {}
         self.just_saw_category = False
 
-    def write_to_file(self, filename):
+    def write_to_file(self, filename, only_content=False):
+        out = self.get_content() if only_content else self.get_html()
+        with open(filename, 'w') as outfile:
+            outfile.write(out)
+
+    def get_html(self):
+        content = self.get_content()
+        html = self.render_template('email.html', content=content)
+        return html
+
+    def get_content(self):
         self._finish_summary()
         sections = "<br>".join([self.render_section_link(c, l) for c, l in self.sections])
-        content = ''.join(self.html_sequence)
-        html = self.render_template('email.html', content=content, email_number=self.email_number, sections=sections)
-        with open(filename, 'w') as out:
-            out.write(html)
+        html = ''.join(self.html_sequence)
+        content = self.render_template('content.html', summaries_and_opinions=html, email_number=self.email_number, sections=sections)
+        return content
 
     def render_section_link(self, category, level):
         cid, name = category.cid, category.name.upper()
@@ -526,7 +535,7 @@ class OutputWriter(object):
             return ', '.join(first_authors) + ' et al'
 
 
-def write_output(filename, entries, database, tree, public, number):
+def write_output(entries, database, tree, public, number):
     writer = OutputWriter(database, number, public)
     writer.register_section(Category('Highlights'), 1)
     for entry in entries:
@@ -545,7 +554,19 @@ def write_output(filename, entries, database, tree, public, number):
 
     for child in tree.children:
         loop(child, 1)
-    writer.write_to_file(filename)
+
+    content = writer.get_content()
+    # Try to copy the content to the clipboard, but don't require it
+    try:
+        if public:
+            import pyperclip
+            pyperclip.copy(content)
+    except ImportError:
+        pass
+
+    prefix = 'public_' if public else ''
+    writer.write_to_file('data/{}content.html'.format(prefix), only_content=True)
+    writer.write_to_file('data/{}email.html'.format(prefix), only_content=False)
 
 
 #################
@@ -559,10 +580,6 @@ def parse_args(args=None):
                         help='HTML export of new entries from reconnaissance spreadsheet.')
     parser.add_argument('-d', '--database', type=str, default='data/Summarized entries.html',
                         help='HTML export of existing summaries from reconnaissance spreadsheet.')
-    parser.add_argument('-c', '--chai_output', type=str, default='data/email.html',
-                        help='Output file name. Defaults to email.html.')
-    parser.add_argument('-p', '--public_output', type=str, default='data/public_email.html',
-                        help='Public output file name. Defaults to public_email.html.')
     parser.add_argument('-n', '--number', type=int, required=True,
                         help='Issue number for the newsletter')
     return parser.parse_args(args)
@@ -579,12 +596,12 @@ def main():
 
     chai_tree = CATEGORY_TREE.clone()
     process(entries, chai_tree)
-    write_output(args.chai_output, entries, database, chai_tree, False, args.number)
+    write_output(entries, database, chai_tree, False, args.number)
 
     public_entries = get_public_entries(entries)
     public_tree = CATEGORY_TREE.clone()
     process(public_entries, public_tree)
-    write_output(args.public_output, public_entries, database, public_tree, True, args.number)
+    write_output(public_entries, database, public_tree, True, args.number)
 
 if __name__ == '__main__':
     main()
