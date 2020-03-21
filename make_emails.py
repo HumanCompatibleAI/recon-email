@@ -427,6 +427,10 @@ class OutputWriter(object):
                 entry['Read more']
             ])
 
+        opinion_name = summarizer_name
+        if '/' in summarizer_name:
+            summarizer_name, opinion_name = summarizer_name.split('/')
+
         if entry['Public?'] != 'Yes':
             if self.public:
                 # In anything except "With edits", summary + opinion will already be empty
@@ -447,7 +451,7 @@ class OutputWriter(object):
         self._add_summary(summary_text, False)
 
         if opinion != '':
-            opinion_text = "<p><b>{0}'s opinion:</b> {1}</p>".format(summarizer_name, opinion)
+            opinion_text = "<p><b>{0}'s opinion:</b> {1}</p>".format(opinion_name, opinion)
             self._add_opinion(opinion_text)
 
 
