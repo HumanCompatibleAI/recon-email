@@ -595,7 +595,7 @@ def main():
     entries = ReconSpreadsheetReader(False).get_entries(
         args.input, 1, 3, COLUMN_NAMES)
     database_entries = ReconSpreadsheetReader(True).get_entries(
-        args.database, 1, 4, COLUMN_NAMES)
+        args.database, 1, 3, COLUMN_NAMES)
     database = make_database(database_entries)
 
     chai_tree = CATEGORY_TREE.clone()
