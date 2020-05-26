@@ -444,7 +444,7 @@ class OutputWriter(object):
         hattip = self.maybe_format(hattip, ' (H/T {0})')
         summarizer = self.maybe_format(summarizer_name, ' (summarized by {0})')
         summary = self.maybe_format(summary, ': {0}')
-        prereqs = self.maybe_format(prereqs, '</p><p><b>Prerequisities:</b> {0}')
+        prereqs = self.maybe_format(prereqs, '</p><p><b>Prerequisites:</b> {0}')
         read_more = self.maybe_format(read_more, '</p><p><b>Read more:</b> {0}')
         template = '<p>{0}{1}{2}{3}{4}{5}{6}</p>'
         summary_text = template.format(title, author, summarizer, hattip, summary, prereqs, read_more)
