@@ -263,7 +263,7 @@ CATEGORY_TREE = Category('All', [
         Category('Privacy and security'),
         Category('Machine ethics'),
     ]),
-    Category('AI strategy and policy'),
+    Category('AI governance'),
     Category('Malicious use of AI'),
     Category('Other progress in AI', [
         Category('Exploration'),
