@@ -261,6 +261,7 @@ CATEGORY_TREE = Category('All', [
     Category('Near-term concerns', [
         Category('Fairness and bias'),
         Category('Privacy and security'),
+        Category('Recommender systems'),
         Category('Machine ethics'),
     ]),
     Category('AI governance'),
