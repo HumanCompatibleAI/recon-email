@@ -171,7 +171,7 @@ class ReconSpreadsheetReader(SpreadsheetReader):
                 'Column {} has invalid value {} (not one of {})\n\nEntry {}'.format(
                     column, entry[column], column_vals, entry)
 
-        assert entry['Title'] != ''
+        assert entry['Title'] != '', str(entry)
 
         summary, opinion = entry['Summary'], entry['My opinion']
 
@@ -179,17 +179,17 @@ class ReconSpreadsheetReader(SpreadsheetReader):
             assert entry['Summarizer'] != '', entry
 
         if entry['Public?'] == 'With edits':
-            assert summary != '' or opinion != ''
+            assert summary != '' or opinion != '', str(entry)
         if entry['Public?'] == '':
-            assert summary == '' and opinion == ''
+            assert summary == '' and opinion == '', str(entry)
 
         if entry['Summarize?'] == 'No':
-            assert summary == '' and opinion == ''
+            assert summary == '' and opinion == '', str(entry)
         elif entry['Summarize?'] == 'Yes':
-            assert summary != ''
+            assert summary != '', str(entry)
 
         if not self.for_database:
-            assert not (summary == '' and opinion != '')
+            assert not (summary == '' and opinion != ''), str(entry)
             assert entry['Category'] in CATEGORIES, \
                 '{} is not a valid category: {}\n\nEntry {}'.format(
                     entry['Category'], CATEGORIES, entry)
